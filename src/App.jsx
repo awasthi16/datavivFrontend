@@ -123,8 +123,6 @@ function App() {
   const currentTimestamp = (authUser?.role === 'viewer' ? viewerSession : session)?.timestamp ?? 0;
   const durationMs = activeSource?.fps ? (totalFrames / activeSource.fps) * 1000 : 0;
   const frameDurationMs = activeSource?.fps ? 1000 / activeSource.fps : 0;
-  const progressSource = authUser?.role === 'viewer' ? viewerSession : session;
-  const progress = progressSource ? ((progressSource.frameIndex ?? 0) / Math.max(totalFrames - 1, 1)) * 100 : 0;
   const isAdmin = authUser?.role === 'admin';
   const isViewer = authUser?.role === 'viewer';
   const displaySession = authUser?.role === 'viewer' ? viewerSession : session;
@@ -553,21 +551,20 @@ function App() {
 
         <section className="main-grid">
           <section className="player-panel card">
-            <div className="player-frame">
-              {rtcStream ? (
-                <video ref={rtcVideoRef} className="player-video" autoPlay playsInline controls />
-              ) : hasPlayableVideo ? (
-                <video
-                  key={activeSource.videoUrl}
-                  ref={videoRef}
-                  className="player-video"
-                  src={activeSource.videoUrl}
-                  poster={activeSource.posterUrl || undefined}
-                  preload="metadata"
-                  controls
-                  playsInline
-                />
-              ) : (
+              <div className="player-frame">
+                {rtcStream ? (
+                <video ref={rtcVideoRef} className="player-video" autoPlay playsInline />
+                ) : hasPlayableVideo ? (
+                  <video
+                    key={activeSource.videoUrl}
+                    ref={videoRef}
+                    className="player-video"
+                    src={activeSource.videoUrl}
+                    poster={activeSource.posterUrl || undefined}
+                    preload="metadata"
+                    playsInline
+                  />
+                ) : (
                 <div className="empty-state">Import a video to start playback</div>
               )}
             </div>
@@ -589,9 +586,6 @@ function App() {
                     Frame {formatNumber(displaySession?.frameIndex)} / {formatNumber(totalFrames - 1)}
                   </span>
                   <span>{formatTimeMs(durationMs)}</span>
-                </div>
-                <div className="timeline-track">
-                  <div className="timeline-progress" style={{ width: `${progress}%` }} />
                 </div>
                 {!isViewer ? (
                   <input
