@@ -70,6 +70,8 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .pill,
@@ -320,6 +322,25 @@ button {
 }
 
 .import-form input {
+  min-height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #0f1722;
+  color: var(--text);
+  padding: 0 12px;
+}
+
+.auth-card {
+  max-width: 520px;
+  margin: 48px auto;
+}
+
+.auth-form {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-form input {
   min-height: 40px;
   border-radius: 10px;
   border: 1px solid var(--line);

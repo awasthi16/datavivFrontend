@@ -1,13 +1,28 @@
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+let authToken = localStorage.getItem('dataviv-auth-token') || '';
 
 function resolveApiUrl(path) {
   return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
 }
 
+function buildHeaders(headers = {}) {
+  return authToken ? { ...headers, Authorization: `Bearer ${authToken}` } : headers;
+}
+
+export function setAuthToken(token) {
+  authToken = token || '';
+
+  if (authToken) {
+    localStorage.setItem('dataviv-auth-token', authToken);
+  } else {
+    localStorage.removeItem('dataviv-auth-token');
+  }
+}
+
 export async function postJson(path, body = {}) {
   const response = await fetch(resolveApiUrl(path), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body)
   });
 
@@ -38,6 +53,7 @@ export async function uploadVideo(path, { file, sourceId, name }) {
 
   const response = await fetch(resolveApiUrl(path), {
     method: 'POST',
+    headers: buildHeaders(),
     body
   });
 
@@ -59,7 +75,8 @@ export async function uploadVideo(path, { file, sourceId, name }) {
 
 export async function deleteRequest(path) {
   const response = await fetch(resolveApiUrl(path), {
-    method: 'DELETE'
+    method: 'DELETE',
+    headers: buildHeaders()
   });
 
   if (!response.ok) {
@@ -95,7 +112,9 @@ export function subscribeToDashboard(onMessage, onError) {
 }
 
 export async function getJson(path) {
-  const response = await fetch(resolveApiUrl(path));
+  const response = await fetch(resolveApiUrl(path), {
+    headers: buildHeaders()
+  });
 
   if (!response.ok) {
     let message = 'Request failed';

@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { deleteRequest, postJson, subscribeToDashboard, uploadVideo } from './api';
+import {
+  deleteRequest,
+  getJson,
+  postJson,
+  setAuthToken,
+  subscribeToDashboard,
+  uploadVideo
+} from './api';
 import { connectRtcPreview } from './rtcClient';
 import {
   formatJson,
@@ -28,6 +35,14 @@ function App() {
   const [dashboard, setDashboard] = useState(defaultState);
   const [streamStatus, setStreamStatus] = useState('Connecting...');
   const [actionStatus, setActionStatus] = useState('Ready');
+  const [authReady, setAuthReady] = useState(false);
+  const [authUser, setAuthUser] = useState(null);
+  const [viewerSession, setViewerSession] = useState(null);
+  const [loginMode, setLoginMode] = useState('viewer');
+  const [adminUsername, setAdminUsername] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [viewerName, setViewerName] = useState('');
+  const [loginError, setLoginError] = useState('');
   const [preprocessPath, setPreprocessPath] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [preprocessStatus, setPreprocessStatus] = useState('Choose a file to import');
@@ -56,16 +71,90 @@ function App() {
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateAuth() {
+      const token = localStorage.getItem('dataviv-auth-token');
+      if (!token) {
+        setAuthReady(true);
+        return;
+      }
+
+      setAuthToken(token);
+
+      try {
+        const response = await getJson('/auth/me');
+        if (cancelled) {
+          return;
+        }
+
+        setAuthUser(response.user);
+        setLoginMode(response.user?.role || 'viewer');
+        if (response.user?.role === 'viewer') {
+          setViewerSession(response.viewerSession || null);
+        }
+      } catch {
+        if (!cancelled) {
+          setAuthToken('');
+          setAuthUser(null);
+          setViewerSession(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setAuthReady(true);
+        }
+      }
+    }
+
+    hydrateAuth();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const activeSource = dashboard.activeSource;
   const session = dashboard.session;
   const metrics = dashboard.metrics;
   const rtc = dashboard.rtc;
   const hasPlayableVideo = Boolean(activeSource?.videoUrl);
   const totalFrames = activeSource?.totalFrames ?? 1;
-  const currentTimestamp = session?.timestamp ?? 0;
+  const currentTimestamp = (authUser?.role === 'viewer' ? viewerSession : session)?.timestamp ?? 0;
   const durationMs = activeSource?.fps ? (totalFrames / activeSource.fps) * 1000 : 0;
   const frameDurationMs = activeSource?.fps ? 1000 / activeSource.fps : 0;
-  const progress = session ? ((session.frameIndex ?? 0) / Math.max(totalFrames - 1, 1)) * 100 : 0;
+  const progressSource = authUser?.role === 'viewer' ? viewerSession : session;
+  const progress = progressSource ? ((progressSource.frameIndex ?? 0) / Math.max(totalFrames - 1, 1)) * 100 : 0;
+  const isAdmin = authUser?.role === 'admin';
+  const displaySession = authUser?.role === 'viewer' ? viewerSession : session;
+  const controlBase = authUser?.role === 'viewer' ? '/viewer/session' : '/session/default';
+
+  useEffect(() => {
+    if (authUser?.role !== 'viewer') {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshViewerSession() {
+      try {
+        const response = await getJson('/viewer/session');
+        if (!cancelled) {
+          setViewerSession(response.session);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setActionStatus(error.message);
+        }
+      }
+    }
+
+    refreshViewerSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.role, activeSource?.sourceId]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -74,14 +163,14 @@ function App() {
       return;
     }
 
-    video.playbackRate = session?.playbackSpeed ?? 1;
+    video.playbackRate = displaySession?.playbackSpeed ?? 1;
 
-    const targetTime = (session?.timestamp ?? 0) / 1000;
+    const targetTime = (displaySession?.timestamp ?? 0) / 1000;
     if (Math.abs(video.currentTime - targetTime) > 0.35) {
       video.currentTime = targetTime;
     }
 
-    if (session?.playing) {
+    if (displaySession?.playing) {
       const playPromise = video.play();
       if (playPromise?.catch) {
         playPromise.catch(() => {});
@@ -89,7 +178,7 @@ function App() {
     } else {
       video.pause();
     }
-  }, [currentTimestamp, hasPlayableVideo, rtcStream, session?.playbackSpeed, session?.playing, activeSource?.videoUrl]);
+  }, [currentTimestamp, hasPlayableVideo, rtcStream, displaySession?.playbackSpeed, displaySession?.playing, activeSource?.videoUrl]);
 
   useEffect(() => {
     if (rtcVideoRef.current) {
@@ -142,14 +231,14 @@ function App() {
 
   const summaryItems = useMemo(
     () => [
-      { label: 'State', value: session?.playing ? 'Playing' : 'Paused' },
+      { label: 'State', value: displaySession?.playing ? 'Playing' : 'Paused' },
       { label: 'Time', value: formatTimeMs(currentTimestamp) },
-      { label: 'Speed', value: formatSpeed(session?.playbackSpeed) },
-      { label: 'Mode', value: formatLoopMode(session?.loopMode) },
+      { label: 'Speed', value: formatSpeed(displaySession?.playbackSpeed) },
+      { label: 'Mode', value: formatLoopMode(displaySession?.loopMode) },
       { label: 'FPS', value: activeSource?.fps ?? '--' },
       { label: 'Latency', value: `${formatNumber(metrics?.lastSwitchLatencyMs)} ms` }
     ],
-    [session, currentTimestamp, activeSource, metrics?.lastSwitchLatencyMs]
+    [displaySession, currentTimestamp, activeSource, metrics?.lastSwitchLatencyMs]
   );
 
   async function performAction(actionId, request, successMessage) {
@@ -166,13 +255,58 @@ function App() {
     }
   }
 
+  async function handleLogin(event) {
+    event.preventDefault();
+    setLoginError('');
+
+    try {
+      if (loginMode === 'admin') {
+        const response = await postJson('/auth/login', {
+          username: adminUsername,
+          password: adminPassword
+        });
+        setAuthToken(response.token);
+        setAuthUser(response.user);
+        setViewerSession(null);
+      } else {
+        const response = await postJson('/auth/viewer', {
+          displayName: viewerName || 'Viewer'
+        });
+        setAuthToken(response.token);
+        setAuthUser(response.user);
+        setViewerSession(response.viewerSession);
+      }
+      setAuthReady(true);
+    } catch (error) {
+      setLoginError(error.message);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await postJson('/auth/logout');
+    } catch {
+      // Ignore logout errors.
+    } finally {
+      setAuthToken('');
+      setAuthUser(null);
+      setViewerSession(null);
+      setAdminPassword('');
+      setLoginError('');
+    }
+  }
+
   async function handlePlaybackToggle() {
-    if (session?.playing) {
-      await performAction('pause', () => postJson('/session/default/pause'), 'Paused');
+    if (displaySession?.playing) {
+      await performAction(
+        'pause',
+        () => postJson(`${controlBase}/pause`),
+        'Paused'
+      );
       return;
     }
 
-    const endpoint = currentTimestamp > 0 ? '/session/default/resume' : '/session/default/play';
+    const endpoint = currentTimestamp > 0 ? `${controlBase}/resume` : `${controlBase}/play`;
     const body = endpoint.endsWith('play') ? { timestamp: 0 } : {};
     await performAction('playback', () => postJson(endpoint, body), 'Playing');
   }
@@ -182,7 +316,7 @@ function App() {
 
     await performAction(
       'seek',
-      () => postJson('/session/default/seek', { frameIndex: nextFrame, timestamp: nextTimestamp }),
+      () => postJson(`${controlBase}/seek`, { frameIndex: nextFrame, timestamp: nextTimestamp }),
       `Seeked to frame ${nextFrame}`
     );
   }
@@ -203,6 +337,10 @@ function App() {
   }
 
   async function switchSource(sourceId) {
+    if (!isAdmin) {
+      return;
+    }
+
     await performAction(
       `switch-${sourceId}`,
       () => postJson(`/session/default/switch/${sourceId}`, { frameIndex: 0 }),
@@ -211,6 +349,10 @@ function App() {
   }
 
   async function deleteSource(sourceId) {
+    if (!isAdmin) {
+      return;
+    }
+
     await performAction(
       `delete-${sourceId}`,
       () => deleteRequest(`/sources/${sourceId}`),
@@ -239,7 +381,7 @@ function App() {
   async function updateSpeed(value) {
     await performAction(
       `speed-${value}`,
-      () => postJson('/session/default/speed', { speed: value }),
+      () => postJson(`${controlBase}/speed`, { speed: value }),
       `Speed ${value}x`
     );
   }
@@ -247,13 +389,18 @@ function App() {
   async function updateLoopMode(value) {
     await performAction(
       `loop-${value}`,
-      () => postJson('/session/default/loop-mode', { loopMode: value }),
+      () => postJson(`${controlBase}/loop-mode`, { loopMode: value }),
       formatLoopMode(value)
     );
   }
 
   async function handlePreprocess(event) {
     event.preventDefault();
+
+    if (!isAdmin) {
+      setPreprocessStatus('Admin access required');
+      return;
+    }
 
     if (!selectedFile && !preprocessPath.trim()) {
       setPreprocessStatus('Choose a file or backend path');
@@ -291,6 +438,81 @@ function App() {
     }
   }
 
+  if (!authReady) {
+    return (
+      <div className="app-shell">
+        <main className="layout">
+          <section className="card auth-card">
+            <div className="section-title">Loading</div>
+            <div className="helper-text">Checking your saved session...</div>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <div className="app-shell">
+        <main className="layout">
+          <section className="card auth-card">
+            <div className="section-title">Sign In</div>
+            <form className="auth-form" onSubmit={handleLogin}>
+              <div className="button-row chips">
+                <button
+                  type="button"
+                  className={`chip ${loginMode === 'viewer' ? 'chip-active' : ''}`}
+                  onClick={() => setLoginMode('viewer')}
+                >
+                  Viewer
+                </button>
+                <button
+                  type="button"
+                  className={`chip ${loginMode === 'admin' ? 'chip-active' : ''}`}
+                  onClick={() => setLoginMode('admin')}
+                >
+                  Admin
+                </button>
+              </div>
+
+              {loginMode === 'admin' ? (
+                <>
+                  <input
+                    type="text"
+                    placeholder="Admin username"
+                    value={adminUsername}
+                    onChange={(event) => setAdminUsername(event.target.value)}
+                  />
+                  <input
+                    type="password"
+                    placeholder="Admin password"
+                    value={adminPassword}
+                    onChange={(event) => setAdminPassword(event.target.value)}
+                  />
+                </>
+              ) : (
+                <input
+                  type="text"
+                  placeholder="Display name"
+                  value={viewerName}
+                  onChange={(event) => setViewerName(event.target.value)}
+                />
+              )}
+
+              <button type="submit" className="primary-button">
+                {loginMode === 'admin' ? 'Open Admin Dashboard' : 'Join as Viewer'}
+              </button>
+            </form>
+            {loginError ? <div className="error-text">{loginError}</div> : null}
+            <div className="helper-text">
+              Admin can upload and control the broadcast. Viewers get their own local playback state.
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <main className="layout">
@@ -300,9 +522,14 @@ function App() {
             <div className="topbar-subtitle">{activeSource?.name || 'No source selected'}</div>
           </div>
           <div className="status-row">
-            <span className={`pill ${session?.playing ? 'pill-live' : ''}`}>{streamStatus}</span>
+            <span className={`pill ${displaySession?.playing ? 'pill-live' : ''}`}>{streamStatus}</span>
             <span className="pill">{rtcStream ? 'RTC' : 'File'}</span>
-            <span className="pill">{actionStatus}</span>
+            <span className="pill">
+              {authUser ? `${authUser.role.toUpperCase()} · ${actionStatus}` : actionStatus}
+            </span>
+            <button type="button" className="secondary-button" onClick={handleLogout}>
+              Logout
+            </button>
           </div>
         </header>
 
@@ -334,14 +561,14 @@ function App() {
                 disabled={Boolean(busyAction)}
                 onClick={handlePlaybackToggle}
               >
-                {session?.playing ? 'Pause' : 'Play'}
+                {displaySession?.playing ? 'Pause' : 'Play'}
               </button>
 
               <div className="timeline-block">
                 <div className="timeline-info">
                   <span>{formatTimeMs(currentTimestamp)}</span>
                   <span>
-                    Frame {formatNumber(session?.frameIndex)} / {formatNumber(totalFrames - 1)}
+                    Frame {formatNumber(displaySession?.frameIndex)} / {formatNumber(totalFrames - 1)}
                   </span>
                   <span>{formatTimeMs(durationMs)}</span>
                 </div>
@@ -396,14 +623,23 @@ function App() {
             <section className="card compact-card">
               <div className="section-title">Playback</div>
               <div className="button-row">
-                <button type="button" className="secondary-button" disabled={Boolean(busyAction)} onClick={() => performAction('resume', () => postJson('/session/default/resume'), 'Resumed')}>Resume</button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={Boolean(busyAction)}
+                  onClick={() =>
+                    performAction('resume', () => postJson(`${controlBase}/resume`), 'Resumed')
+                  }
+                >
+                  Resume
+                </button>
               </div>
               <div className="button-row chips">
                 {speedOptions.map((value) => (
                   <button
                     key={value}
                     type="button"
-                    className={`chip ${session?.playbackSpeed === value ? 'chip-active' : ''}`}
+                    className={`chip ${displaySession?.playbackSpeed === value ? 'chip-active' : ''}`}
                     disabled={Boolean(busyAction)}
                     onClick={() => updateSpeed(value)}
                   >
@@ -416,7 +652,7 @@ function App() {
                   <button
                     key={mode.value}
                     type="button"
-                    className={`chip ${session?.loopMode === mode.value ? 'chip-active' : ''}`}
+                    className={`chip ${displaySession?.loopMode === mode.value ? 'chip-active' : ''}`}
                     disabled={Boolean(busyAction)}
                     onClick={() => updateLoopMode(mode.value)}
                   >
@@ -431,7 +667,7 @@ function App() {
               <div className="frame-jump-panel">
                 <div className="frame-live-box">
                   <span className="frame-live-label">Live frame</span>
-                  <strong>{formatNumber(session?.frameIndex)}</strong>
+                  <strong>{formatNumber(displaySession?.frameIndex)}</strong>
                 </div>
                 <input
                   id="frame-jump-input"
@@ -464,26 +700,28 @@ function App() {
               </div>
             </section>
 
-            <section className="card compact-card">
-              <div className="section-title">Import</div>
-              <form className="import-form" onSubmit={handlePreprocess}>
-                <input
-                  type="file"
-                  accept="video/mp4,video/quicktime,video/*"
-                  onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-                />
-                <input
-                  type="text"
-                  placeholder="Optional backend path"
-                  value={preprocessPath}
-                  onChange={(event) => setPreprocessPath(event.target.value)}
-                />
-                <button type="submit" className="primary-button" disabled={busyAction === 'preprocess'}>
-                  {busyAction === 'preprocess' ? 'Importing...' : 'Import'}
-                </button>
-              </form>
-              <div className="helper-text">{selectedFile ? selectedFile.name : preprocessStatus}</div>
-            </section>
+            {isAdmin ? (
+              <section className="card compact-card">
+                <div className="section-title">Import</div>
+                <form className="import-form" onSubmit={handlePreprocess}>
+                  <input
+                    type="file"
+                    accept="video/mp4,video/quicktime,video/*"
+                    onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Optional backend path"
+                    value={preprocessPath}
+                    onChange={(event) => setPreprocessPath(event.target.value)}
+                  />
+                  <button type="submit" className="primary-button" disabled={busyAction === 'preprocess'}>
+                    {busyAction === 'preprocess' ? 'Importing...' : 'Import'}
+                  </button>
+                </form>
+                <div className="helper-text">{selectedFile ? selectedFile.name : preprocessStatus}</div>
+              </section>
+            ) : null}
           </aside>
         </section>
 
@@ -506,17 +744,23 @@ function App() {
                       <span className="row-label">
                         {source.isSynthetic ? 'Built-in' : source.videoUrl ? 'Playable' : 'Synthetic'}
                       </span>
-                      <button type="button" className="secondary-button" disabled={Boolean(busyAction)} onClick={() => switchSource(source.sourceId)}>
-                        {isActive ? 'Active' : 'Open'}
-                      </button>
-                      <button
-                        type="button"
-                        className="danger-button"
-                        disabled={Boolean(busyAction) || source.isSynthetic}
-                        onClick={() => deleteSource(source.sourceId)}
-                      >
-                        Delete
-                      </button>
+                      {isAdmin ? (
+                        <>
+                          <button type="button" className="secondary-button" disabled={Boolean(busyAction)} onClick={() => switchSource(source.sourceId)}>
+                            {isActive ? 'Active' : 'Open'}
+                          </button>
+                          <button
+                            type="button"
+                            className="danger-button"
+                            disabled={Boolean(busyAction) || source.isSynthetic}
+                            onClick={() => deleteSource(source.sourceId)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      ) : (
+                        <span className="row-label">{isActive ? 'Watching Now' : 'Available'}</span>
+                      )}
                     </div>
                   </div>
                 );
@@ -529,7 +773,7 @@ function App() {
             <div className="diagnostic-grid">
               <section>
                 <div className="mini-title">Session</div>
-                <pre>{formatJson(session)}</pre>
+                <pre>{formatJson(displaySession)}</pre>
               </section>
               <section>
                 <div className="mini-title">Metrics</div>
