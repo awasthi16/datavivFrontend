@@ -246,10 +246,12 @@ function App() {
     setActionStatus('Working...');
 
     try {
-      await request();
+      const result = await request();
       setActionStatus(successMessage);
+      return result;
     } catch (error) {
       setActionStatus(error.message);
+      throw error;
     } finally {
       setBusyAction('');
     }
@@ -298,27 +300,36 @@ function App() {
 
   async function handlePlaybackToggle() {
     if (displaySession?.playing) {
-      await performAction(
+      const response = await performAction(
         'pause',
         () => postJson(`${controlBase}/pause`),
         'Paused'
       );
+      if (authUser?.role === 'viewer' && response?.session) {
+        setViewerSession(response.session);
+      }
       return;
     }
 
     const endpoint = currentTimestamp > 0 ? `${controlBase}/resume` : `${controlBase}/play`;
     const body = endpoint.endsWith('play') ? { timestamp: 0 } : {};
-    await performAction('playback', () => postJson(endpoint, body), 'Playing');
+    const response = await performAction('playback', () => postJson(endpoint, body), 'Playing');
+    if (authUser?.role === 'viewer' && response?.session) {
+      setViewerSession(response.session);
+    }
   }
 
   async function handleSeekCommit(nextFrame) {
     const nextTimestamp = Math.round(nextFrame * frameDurationMs);
 
-    await performAction(
+    const response = await performAction(
       'seek',
       () => postJson(`${controlBase}/seek`, { frameIndex: nextFrame, timestamp: nextTimestamp }),
       `Seeked to frame ${nextFrame}`
     );
+    if (authUser?.role === 'viewer' && response?.session) {
+      setViewerSession(response.session);
+    }
   }
 
   async function handleFrameJump() {
@@ -379,19 +390,25 @@ function App() {
   }
 
   async function updateSpeed(value) {
-    await performAction(
+    const response = await performAction(
       `speed-${value}`,
       () => postJson(`${controlBase}/speed`, { speed: value }),
       `Speed ${value}x`
     );
+    if (authUser?.role === 'viewer' && response?.session) {
+      setViewerSession(response.session);
+    }
   }
 
   async function updateLoopMode(value) {
-    await performAction(
+    const response = await performAction(
       `loop-${value}`,
       () => postJson(`${controlBase}/loop-mode`, { loopMode: value }),
       formatLoopMode(value)
     );
+    if (authUser?.role === 'viewer' && response?.session) {
+      setViewerSession(response.session);
+    }
   }
 
   async function handlePreprocess(event) {
