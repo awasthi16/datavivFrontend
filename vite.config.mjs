@@ -12,6 +12,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      '/auth': 'http://localhost:8080',
+      '/viewer': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
       '/schema': 'http://localhost:8080',
       '/sources': 'http://localhost:8080',

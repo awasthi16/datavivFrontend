@@ -9,6 +9,21 @@ function buildHeaders(headers = {}) {
   return authToken ? { ...headers, Authorization: `Bearer ${authToken}` } : headers;
 }
 
+async function readErrorMessage(response, fallback) {
+  const body = await response.text();
+
+  if (!body) {
+    return fallback;
+  }
+
+  try {
+    const payload = JSON.parse(body);
+    return payload.error || payload.message || fallback;
+  } catch {
+    return body;
+  }
+}
+
 export function setAuthToken(token) {
   authToken = token || '';
 
@@ -27,16 +42,7 @@ export async function postJson(path, body = {}) {
   });
 
   if (!response.ok) {
-    let message = 'Request failed';
-
-    try {
-      const payload = await response.json();
-      message = payload.error || payload.message || message;
-    } catch {
-      message = await response.text();
-    }
-
-    throw new Error(message);
+    throw new Error(await readErrorMessage(response, 'Request failed'));
   }
 
   return response.json();
@@ -58,16 +64,7 @@ export async function uploadVideo(path, { file, sourceId, name }) {
   });
 
   if (!response.ok) {
-    let message = 'Upload failed';
-
-    try {
-      const payload = await response.json();
-      message = payload.error || payload.message || message;
-    } catch {
-      message = await response.text();
-    }
-
-    throw new Error(message);
+    throw new Error(await readErrorMessage(response, 'Upload failed'));
   }
 
   return response.json();
@@ -80,16 +77,7 @@ export async function deleteRequest(path) {
   });
 
   if (!response.ok) {
-    let message = 'Delete failed';
-
-    try {
-      const payload = await response.json();
-      message = payload.error || payload.message || message;
-    } catch {
-      message = await response.text();
-    }
-
-    throw new Error(message);
+    throw new Error(await readErrorMessage(response, 'Delete failed'));
   }
 
   return response.json();
@@ -117,16 +105,7 @@ export async function getJson(path) {
   });
 
   if (!response.ok) {
-    let message = 'Request failed';
-
-    try {
-      const payload = await response.json();
-      message = payload.error || payload.message || message;
-    } catch {
-      message = await response.text();
-    }
-
-    throw new Error(message);
+    throw new Error(await readErrorMessage(response, 'Request failed'));
   }
 
   return response.json();
