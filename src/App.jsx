@@ -126,6 +126,7 @@ function App() {
   const progressSource = authUser?.role === 'viewer' ? viewerSession : session;
   const progress = progressSource ? ((progressSource.frameIndex ?? 0) / Math.max(totalFrames - 1, 1)) * 100 : 0;
   const isAdmin = authUser?.role === 'admin';
+  const isViewer = authUser?.role === 'viewer';
   const displaySession = authUser?.role === 'viewer' ? viewerSession : session;
   const controlBase = authUser?.role === 'viewer' ? '/viewer/session' : '/session/default';
 
@@ -592,17 +593,21 @@ function App() {
                 <div className="timeline-track">
                   <div className="timeline-progress" style={{ width: `${progress}%` }} />
                 </div>
-                <input
-                  className="timeline-slider"
-                  type="range"
-                  min="0"
-                  max={Math.max(totalFrames - 1, 0)}
-                  value={Math.min(seekValue, Math.max(totalFrames - 1, 0))}
-                  onChange={(event) => setSeekValue(Number(event.target.value))}
-                  onMouseUp={(event) => handleSeekCommit(Number(event.currentTarget.value))}
-                  onTouchEnd={(event) => handleSeekCommit(Number(event.currentTarget.value))}
-                  disabled={!activeSource || Boolean(busyAction)}
-                />
+                {!isViewer ? (
+                  <input
+                    className="timeline-slider"
+                    type="range"
+                    min="0"
+                    max={Math.max(totalFrames - 1, 0)}
+                    value={Math.min(seekValue, Math.max(totalFrames - 1, 0))}
+                    onChange={(event) => setSeekValue(Number(event.target.value))}
+                    onMouseUp={(event) => handleSeekCommit(Number(event.currentTarget.value))}
+                    onTouchEnd={(event) => handleSeekCommit(Number(event.currentTarget.value))}
+                    disabled={!activeSource || Boolean(busyAction)}
+                  />
+                ) : (
+                  <div className="helper-text">Type a frame number below and jump directly to it.</div>
+                )}
               </div>
             </div>
 
@@ -638,7 +643,7 @@ function App() {
             </section>
 
             <section className="card compact-card">
-              <div className="section-title">Playback</div>
+              <div className="section-title">{isViewer ? 'Viewer Controls' : 'Playback'}</div>
               <div className="button-row">
                 <button
                   type="button"
@@ -709,11 +714,11 @@ function App() {
                   disabled={!activeSource || Boolean(busyAction)}
                   onClick={handleFrameJump}
                 >
-                  Go To Frame
+                  Jump To Frame
                 </button>
               </div>
               <div className="helper-text">
-                Range: 0 to {formatNumber(Math.max(totalFrames - 1, 0))}
+                Range: 0 to {formatNumber(Math.max(totalFrames - 1, 0))}. Viewer actions stay local.
               </div>
             </section>
 
