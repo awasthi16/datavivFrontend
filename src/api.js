@@ -1,5 +1,11 @@
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+
+function resolveApiUrl(path) {
+  return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
+}
+
 export async function postJson(path, body = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(resolveApiUrl(path), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -30,7 +36,7 @@ export async function uploadVideo(path, { file, sourceId, name }) {
     body.append('name', name);
   }
 
-  const response = await fetch(path, {
+  const response = await fetch(resolveApiUrl(path), {
     method: 'POST',
     body
   });
@@ -52,7 +58,7 @@ export async function uploadVideo(path, { file, sourceId, name }) {
 }
 
 export async function deleteRequest(path) {
-  const response = await fetch(path, {
+  const response = await fetch(resolveApiUrl(path), {
     method: 'DELETE'
   });
 
@@ -73,7 +79,7 @@ export async function deleteRequest(path) {
 }
 
 export function subscribeToDashboard(onMessage, onError) {
-  const source = new EventSource('/events');
+  const source = new EventSource(resolveApiUrl('/events'));
 
   source.onmessage = (event) => {
     onMessage(JSON.parse(event.data));
@@ -89,7 +95,7 @@ export function subscribeToDashboard(onMessage, onError) {
 }
 
 export async function getJson(path) {
-  const response = await fetch(path);
+  const response = await fetch(resolveApiUrl(path));
 
   if (!response.ok) {
     let message = 'Request failed';
